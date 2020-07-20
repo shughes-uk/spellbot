@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import inspect
 import logging
 import re
@@ -7,7 +6,6 @@ import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import wraps
-from io import StringIO
 from os import getenv
 from pathlib import Path
 from uuid import uuid4
@@ -22,7 +20,7 @@ from sqlalchemy.sql import text
 from spellbot._version import __version__
 from spellbot.assets import ASSET_FILES, s
 from spellbot.constants import ADMIN_ROLE, CREATE_ENDPOINT, THUMB_URL
-from spellbot.data import Channel, Data, Event, Game, Server, Tag, User
+from spellbot.data import Channel, Data, Game, Server, User
 
 # Application Paths
 RUNTIME_ROOT = Path(".")
@@ -124,19 +122,12 @@ class SpellBot(discord.Client):
     """Discord SpellTable Bot"""
 
     def __init__(
-        self,
-        token="",
-        auth="",
-        db_url=DEFAULT_DB_URL,
-        log_level=logging.ERROR,
-        mock_games=False,
+        self, token="", db_url=DEFAULT_DB_URL, log_level=logging.ERROR, mock_games=False,
     ):
         logging.basicConfig(level=log_level)
         loop = asyncio.get_event_loop()
         super().__init__(loop=loop)
         self.token = token
-        self.auth = auth
-        self.mock_games = mock_games
 
         # We have to make sure that DB_DIR exists before we try to create
         # the database as part of instantiating the Data object.
@@ -269,36 +260,8 @@ class SpellBot(discord.Client):
                 session.delete(game)
             session.commit()
 
-    def cleanup_started_games_task(self, loop):  # pragma: no cover
-        """Starts a task that culls old games."""
-        FOUR_HOURS = 14400
-
-        async def task():
-            while True:
-                await asyncio.sleep(FOUR_HOURS)
-                await self.cleanup_started_games()
-
-        loop.create_task(task())
-
-    async def cleanup_started_games(self):
-        """Culls games older than the given window of minutes."""
-        async with self.session() as session:
-            games = session.query(Game).filter(Game.status == "started").all()
-            for game in games:
-                game.tags = []  # cascade delete tag associations
-                session.delete(game)
-            session.commit()
-
     def run(self):  # pragma: no cover
         super().run(self.token)
-
-    def create_game(self):  # pragma: no cover
-        if self.mock_games:
-            return f"http://exmaple.com/game/{uuid4()}"
-        else:
-            headers = {"user-agent": f"spellbot/{__version__}", "key": self.auth}
-            r = requests.post(CREATE_ENDPOINT, headers=headers)
-            return r.json()["gameUrl"]
 
     def ensure_user_exists(self, session, user):
         """Ensures that the user row exists for the given discord user."""
@@ -497,7 +460,6 @@ class SpellBot(discord.Client):
                         found_discord_users.append(discord_user)
 
             if len(found_discord_users) == game.size:  # game is ready
-                game.url = self.create_game()
                 game.status = "started"
                 session.commit()
                 for discord_user in found_discord_users:
@@ -683,9 +645,9 @@ class SpellBot(discord.Client):
 
         params = [param.lower() for param in params]
         mentions = message.mentions if message.channel.type != "private" else []
-
-        size = size_from_params(params)
-        if not size or not (1 < size < 5):
+        title = params[0]
+        size = int(params[1])
+        if not size or not (1 < size):
             return await message.channel.send(s("lfg_size_bad"))
 
         if len(mentions) + 1 >= size:
@@ -702,18 +664,6 @@ class SpellBot(discord.Client):
         if mentioned_users:
             session.commit()
 
-        tag_names = tag_names_from_params(params)
-        if len(tag_names) > 5:
-            return await message.channel.send(s("lfg_too_many_tags"))
-
-        tags = []
-        for tag_name in tag_names:
-            tag = session.query(Tag).filter_by(name=tag_name).one_or_none()
-            if not tag:
-                tag = Tag(name=tag_name)
-                session.add(tag)
-            tags.append(tag)
-
         now = datetime.utcnow()
         expires_at = now + timedelta(minutes=server.expire)
         user.invited = False
@@ -723,7 +673,7 @@ class SpellBot(discord.Client):
             expires_at=expires_at,
             size=size,
             channel_xid=message.channel.id,
-            tags=tags,
+            title=title,
             server=server,
         )
         for mentioned_user in mentioned_users:
@@ -741,325 +691,6 @@ class SpellBot(discord.Client):
             session.commit()
             await post.add_reaction("➕")
             await post.add_reaction("➖")
-
-    @command(allow_dm=False)
-    async def event(self, session, prefix, params, message):
-        """
-        Create many games in batch from an attached CSV data file. _Requires the
-        "SpellBot Admin" role._
-
-        For example, if your event is for a Modern tournement you might attach a CSV file
-        with a comment like `!event Player1Username Player2Username`. This would assume
-        that the players' discord user names are found in the "Player1Username" and
-        "Player2Username" CSV columns. The game size is deduced from the number of column
-        names given, so we know the games created in this example are `size:2`.
-
-        Games will not be created immediately. This is to allow you to verify things look
-        ok. This command will also give you directions on how to actually start the games
-        for this event as part of its reply.
-        * Optional: Add a message by using "msg: " followed by the message content.
-        * Optional: Add tags by using "tags: " followed by the tags you want.
-        & <column 1> <column 2> ... [tags: tag-1 tag-2] [msg: Hello world!]
-        """
-        if not is_admin(message.channel, message.author):
-            return await message.channel.send(s("not_admin"))
-
-        if not message.attachments:
-            return await message.channel.send(s("event_no_data"))
-
-        if not params:
-            return await message.channel.send(s("event_no_params"))
-
-        n_params = len(params)
-        optional_message = None
-        optional_tags = None
-        try:
-            msg_index = params.index("msg:")
-        except ValueError:
-            msg_index = None
-        try:
-            tag_index = params.index("tags:")
-        except ValueError:
-            tag_index = None
-        if msg_index:
-            stop = tag_index if tag_index and tag_index > msg_index else n_params
-            optional_message = " ".join(params[msg_index + 1 : stop])
-        if tag_index:
-            stop = msg_index if msg_index and msg_index > tag_index else n_params
-            optional_tags = params[tag_index + 1 : stop]
-        if optional_message or optional_tags:
-            params = params[0 : min(msg_index or n_params, tag_index or n_params)]
-        if optional_message and len(optional_message) >= 255:
-            return await message.channel.send(s("game_message_too_long"))
-        if optional_tags and len(optional_tags) > 5:
-            return await message.channel.send(s("game_too_many_tags"))
-
-        size = len(params)
-        if not (1 < size <= 4):
-            return await message.channel.send(s("event_bad_play_count"))
-
-        tags = []
-        if optional_tags:
-            for tag_name in optional_tags:
-                tag = session.query(Tag).filter_by(name=tag_name).first()
-                if not tag:
-                    tag = Tag(name=tag_name)
-                    session.add(tag)
-                tags.append(tag)
-            session.commit()
-
-        attachment = message.attachments[0]
-
-        if not attachment.filename.lower().endswith(".csv"):
-            return await message.channel.send(s("event_not_csv"))
-
-        bdata = await message.attachments[0].read()
-        sdata = bdata.decode("utf-8")
-
-        has_header = csv.Sniffer().has_header(sdata)
-        if not has_header:
-            return await message.channel.send(s("event_no_header"))
-
-        server = self.ensure_server_exists(session, message.channel.guild.id)
-        reader = csv.reader(StringIO(sdata))
-        header = [column.lower().strip() for column in next(reader)]
-        params = [param.lower().strip() for param in params]
-
-        if any(param not in header for param in params):
-            return await message.channel.send(s("event_no_header"))
-
-        columns = [header.index(param) for param in params]
-
-        event = Event()
-        session.add(event)
-        session.commit()
-
-        members = message.channel.guild.members
-        member_lookup = {member.name.lower().strip(): member for member in members}
-        for i, row in enumerate(reader):
-            csv_row_data = [row[column].strip() for column in columns]
-            players_s = ", ".join([f'"{value}"' for value in csv_row_data])
-            player_lnames = [
-                re.sub("#.*$", "", value.lower()).lstrip("@") for value in csv_row_data
-            ]
-
-            if any(not lname for lname in player_lnames):
-                warning = s("event_missing_player", row=i + 1, players=players_s)
-                await message.channel.send(warning)
-                continue
-
-            warnings = set()
-
-            player_discord_users = []
-            for csv_data, lname in zip(csv_row_data, player_lnames):
-                player_discord_user = member_lookup.get(lname)
-                if player_discord_user:
-                    player_discord_users.append(player_discord_user)
-                else:
-                    warnings.add(
-                        s(
-                            "event_missing_user",
-                            row=i + 1,
-                            name=csv_data,
-                            players=players_s,
-                        )
-                    )
-
-            warnings_s = "\n".join(warnings)
-            for page in paginate(warnings_s):
-                await message.channel.send(page)
-
-            if len(player_discord_users) != size:
-                continue
-
-            player_users = [
-                self.ensure_user_exists(session, player_discord_user)
-                for player_discord_user in player_discord_users
-            ]
-
-            for player_discord_user, player_user in zip(
-                player_discord_users, player_users
-            ):
-                if player_user.waiting:
-                    await self.try_to_remove_plus(player_user.game, player_discord_user)
-                    player_user.game = None
-                player_user.cached_name = player_discord_user.name
-            session.commit()
-
-            now = datetime.utcnow()
-            expires_at = now + timedelta(minutes=server.expire)
-            game = Game(
-                created_at=now,
-                expires_at=expires_at,
-                guild_xid=message.channel.guild.id,
-                size=size,
-                updated_at=now,
-                status="ready",
-                message=optional_message,
-                users=player_users,
-                event=event,
-                tags=tags,
-            )
-            session.add(game)
-            session.commit()
-
-        if not event.games:
-            session.delete(event)
-            return await message.channel.send(s("event_empty"))
-
-        session.commit()
-        await message.channel.send(s("event_created", prefix=prefix, event_id=event.id))
-
-    @command(allow_dm=False)
-    async def begin(self, session, prefix, params, message):
-        """
-        Confirm creation of games for the given event id. _Requires the
-        "SpellBot Admin" role._
-        & <event id>
-        """
-        if not is_admin(message.channel, message.author):
-            return await message.channel.send(s("not_admin"))
-
-        if not params:
-            return await message.channel.send(s("begin_no_params"))
-
-        event_id = to_int(params[0])
-        if not event_id:
-            return await message.channel.send(s("begin_bad_event"))
-
-        event = session.query(Event).filter(Event.id == event_id).one_or_none()
-        if not event:
-            return await message.channel.send(s("begin_bad_event"))
-
-        if event.started:
-            return await message.channel.send(s("begin_event_already_started"))
-
-        for game in event.games:
-            # Can't rely on "<@{xid}>" working because the user could have logged out.
-            players_str = ", ".join(sorted([user.cached_name for user in game.users]))
-
-            found_discord_users = []
-            for game_user in game.users:
-                discord_user = await self.safe_fetch_user(game_user.xid)
-                if not discord_user:  # game_user has left the server since event created
-                    warning = s("begin_user_left", players=players_str)
-                    await message.channel.send(warning)
-                else:
-                    found_discord_users.append(discord_user)
-            if len(found_discord_users) != len(game.users):
-                continue
-
-            game.url = self.create_game()
-            game.status = "started"
-            response = game.to_embed()
-            for discord_user in found_discord_users:
-                await discord_user.send(embed=response)
-
-            session.commit()
-            await message.channel.send(
-                s("game_created", id=game.id, url=game.url, players=players_str)
-            )
-
-    @command(allow_dm=False)
-    async def game(self, session, prefix, params, message):
-        """
-        Create a game between mentioned users. _Requires the "SpellBot Admin" role._
-
-        Allows event runners to spin up an ad-hoc game directly between mentioned players.
-        * The user who issues this command is **NOT** added to the game themselves.
-        * You must mention all of the players to be seated in the game.
-        * Optional: Add a message by using "msg: " followed by the message content.
-        * Optional: Add tags by using "tags: " followed by the tags you want.
-        & @player1 @player2 ... [tags: tag-1 tag-2] [msg: Hello world!]
-        """
-        if not is_admin(message.channel, message.author):
-            return await message.channel.send(s("not_admin"))
-
-        n_params = len(params)
-        optional_message = None
-        optional_tags = None
-        try:
-            msg_index = params.index("msg:")
-        except ValueError:
-            msg_index = None
-        try:
-            tag_index = params.index("tags:")
-        except ValueError:
-            tag_index = None
-        if msg_index:
-            stop = tag_index if tag_index and tag_index > msg_index else n_params
-            optional_message = " ".join(params[msg_index + 1 : stop])
-        if tag_index:
-            stop = msg_index if msg_index and msg_index > tag_index else n_params
-            optional_tags = params[tag_index + 1 : stop]
-        if optional_message or optional_tags:
-            params = params[0 : min(msg_index or n_params, tag_index or n_params)]
-        if optional_message and len(optional_message) >= 255:
-            return await message.channel.send(s("game_message_too_long"))
-        if optional_tags and len(optional_tags) > 5:
-            return await message.channel.send(s("game_too_many_tags"))
-
-        params = [param.lower() for param in params]
-        mentions = message.mentions if message.channel.type != "private" else []
-
-        size = size_from_params(params)
-        if not size or not (1 < size <= 4):
-            return await message.channel.send(s("game_size_bad"))
-
-        if len(mentions) > size:
-            return await message.channel.send(s("game_too_many_mentions", size=size))
-        elif len(mentions) < size:
-            return await message.channel.send(s("game_too_few_mentions", size=size))
-
-        mentioned_users = []
-        for mentioned in mentions:
-            mentioned_user = self.ensure_user_exists(session, mentioned)
-            if mentioned_user.waiting:
-                await self.try_to_remove_plus(mentioned_user.game, mentioned)
-                mentioned_user.game = None
-            mentioned_users.append(mentioned_user)
-        session.commit()
-
-        tags = []
-        if optional_tags:
-            for tag_name in optional_tags:
-                tag = session.query(Tag).filter_by(name=tag_name).first()
-                if not tag:
-                    tag = Tag(name=tag_name)
-                    session.add(tag)
-                tags.append(tag)
-
-        server = self.ensure_server_exists(session, message.channel.guild.id)
-        session.commit()
-
-        now = datetime.utcnow()
-        expires_at = now + timedelta(minutes=server.expire)
-        url = self.create_game()
-        game = Game(
-            channel_xid=message.channel.id,
-            created_at=now,
-            expires_at=expires_at,
-            guild_xid=server.guild_xid,
-            size=size,
-            updated_at=now,
-            url=url,
-            status="started",
-            message=optional_message,
-            users=mentioned_users,
-            tags=tags,
-        )
-        session.add(game)
-        session.commit()
-
-        player_response = game.to_embed()
-        for player in mentioned_users:
-            discord_user = await self.safe_fetch_user(player.xid)
-            await discord_user.send(embed=player_response)
-
-        players_str = ", ".join(sorted([f"<@{user.xid}>" for user in mentioned_users]))
-        await message.channel.send(
-            s("game_created", id=game.id, url=game.url, players=players_str)
-        )
 
     @command(allow_dm=True)
     async def leave(self, session, prefix, params, message):
@@ -1220,15 +851,7 @@ def get_log_level(fallback):  # pragma: no cover
     is_flag=True,
     help="Development mode, automatically reload bot when source changes",
 )
-@click.option(
-    "--mock-games",
-    default=False,
-    is_flag=True,
-    help="Produce mock game urls instead of real ones",
-)
-def main(
-    log_level, verbose, database_url, database_env, dev, mock_games
-):  # pragma: no cover
+def main(log_level, verbose, database_url, database_env, dev):  # pragma: no cover
     database_env = get_db_env(database_env)
     database_url = get_db_url(database_env, database_url)
     log_level = get_log_level(log_level)
@@ -1244,19 +867,8 @@ def main(
         )
         sys.exit(1)
 
-    auth = getenv("SPELLTABLE_AUTH", None)
-    if not auth and not mock_games:
-        print(  # noqa: T001
-            "error: SPELLTABLE_AUTH environment variable not set", file=sys.stderr
-        )
-        sys.exit(1)
-
     client = SpellBot(
-        token=token,
-        auth=auth,
-        db_url=database_url,
-        log_level="DEBUG" if verbose else log_level,
-        mock_games=mock_games,
+        token=token, db_url=database_url, log_level="DEBUG" if verbose else log_level,
     )
 
     if dev:

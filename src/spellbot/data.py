@@ -74,19 +74,6 @@ games_tags = Table(
 )
 
 
-class Event(Base):
-    __tablename__ = "events"
-    id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
-    games = relationship("Game", back_populates="event")
-
-    @property
-    def started(self):
-        return any(game.status == "started" for game in self.games)
-
-    def __repr__(self):
-        return json.dumps({"id": self.id})
-
-
 class User(Base):
     __tablename__ = "users"
     xid = Column(BigInteger, primary_key=True, nullable=False)
@@ -112,29 +99,18 @@ class Game(Base):
         BigInteger, ForeignKey("servers.guild_xid", ondelete="CASCADE"), nullable=False
     )
     channel_xid = Column(BigInteger)
-    url = Column(String(255))
+    title = Column(String(255))
     status = Column(String(30), nullable=False, server_default=text("'pending'"))
     message = Column(String(255))
-    event_id = Column(
-        Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True
-    )
     message_xid = Column(BigInteger)
     users = relationship("User", back_populates="game")
-    tags = relationship("Tag", secondary=games_tags, back_populates="games")
     server = relationship("Server", back_populates="games")
-    event = relationship("Event", back_populates="games")
 
     @classmethod
     def expired(cls, session):
         return (
             session.query(Game)
-            .filter(
-                and_(
-                    datetime.utcnow() >= Game.expires_at,
-                    Game.url == None,
-                    Game.status != "ready",
-                )
-            )
+            .filter(and_(datetime.utcnow() >= Game.expires_at, Game.status != "ready"))
             .all()
         )
 
@@ -150,44 +126,27 @@ class Game(Base):
             "size": self.size,
             "guild_xid": self.guild_xid,
             "channel_xid": self.channel_xid,
-            "url": self.url,
             "status": self.status,
             "message": self.message,
             "message_xid": self.message_xid,
-            "tags": [tag.name for tag in self.tags],
+            "title": self.title,
         }
 
     def to_embed(self):
-        if self.url:
-            title = self.message if self.message else "**Your game is ready!**"
+        if self.status == "started":
+            f"{self.title} **Your game is ready!**"
         else:
             remaining = self.size - len(self.users)
             plural = "s" if remaining > 1 else ""
             title = f"**Waiting for {remaining} more player{plural} to join...**"
         embed = discord.Embed(title=title)
         embed.set_thumbnail(url=THUMB_URL)
-        if self.url:
-            embed.description = (
-                f"Click the link below to join your SpellTable game.\n<{self.url}>"
-            )
-        else:
-            embed.description = "To join/leave this game, react with ➕/➖."
+        embed.description = "To join/leave this game, react with ➕/➖."
         if self.users:
             players = ", ".join(sorted([f"<@{user.xid}>" for user in self.users]))
             embed.add_field(name="Players", value=players)
-        tag_names = None
-        if not (len(self.tags) == 1 and self.tags[0].name == "default"):
-            tag_names = ", ".join(sorted([tag.name for tag in self.tags]))
-            embed.add_field(name="Tags", value=tag_names)
         embed.color = discord.Color(0x5A3EFD)
         return embed
-
-
-class Tag(Base):
-    __tablename__ = "tags"
-    id = Column(Integer, primary_key=True, nullable=False, autoincrement=True)
-    name = Column(String(50), nullable=False)
-    games = relationship("Game", secondary=games_tags, back_populates="tags")
 
 
 def create_all(connection, db_url):
