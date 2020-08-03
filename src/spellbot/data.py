@@ -13,7 +13,6 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
-    Table,
     and_,
     create_engine,
     text,
@@ -64,14 +63,6 @@ class Channel(Base):
     )
     name = Column(String(100), nullable=False)
     server = relationship("Server", back_populates="channels")
-
-
-games_tags = Table(
-    "games_tags",
-    Base.metadata,
-    Column("game_id", Integer, ForeignKey("games.id", ondelete="CASCADE")),
-    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE")),
-)
 
 
 class User(Base):
@@ -134,11 +125,11 @@ class Game(Base):
 
     def to_embed(self):
         if self.status == "started":
-            f"{self.title} **Your game is ready!**"
+            f"{self.title} Your game is ready!"
         else:
             remaining = self.size - len(self.users)
             plural = "s" if remaining > 1 else ""
-            title = f"**Waiting for {remaining} more player{plural} to join...**"
+            title = f"__{self.title}__\nWaiting for {remaining} more player{plural} to join..."
         embed = discord.Embed(title=title)
         embed.set_thumbnail(url=THUMB_URL)
         embed.description = "To join/leave this game, react with ➕/➖."

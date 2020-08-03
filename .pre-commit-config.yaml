@@ -1,0 +1,38 @@
+# ------------------------------------------------------------------------------
+# Pre-Commit Template
+# ------------------------------------------------------------------------------
+
+# TODO: add template hooks to repos https://pre-commit.com/#pre-commit-init-templatedir
+#  or add custom .pre-commit-hooks.yaml
+
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: e1668fe86af3810fbca72b8653fe478e66a0afdc  # frozen: v3.2.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+
+  - repo: https://github.com/psf/black
+    rev: 6bedb5c58a7d8c25aa9509f8217bc24e9797e90d  # frozen: 19.10b0
+    hooks:
+      - id: black
+        language_version: python3.7
+
+  - repo: https://github.com/timothycrosley/isort
+    rev: 253b9476c6c6fd8973c9fd9f8928d6c802481342  # frozen: 5.2.2
+    hooks:
+      - id: isort
+        language: python
+        types: [python]
+        additional_dependencies: [toml]
+        args: [-sp=./pyproject.toml]
+# Uncomment to exclude project files from pre-commit
+exclude: |
+  (?x)(
+      ^src/nominode/tests/db_seeded_tests/snapshots |
+      ^src/nominode/tests/db_unseeded_tests/snapshots
+  )

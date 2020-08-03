@@ -11,9 +11,10 @@ ASSETS_DIR = SRC_ROOT / "src" / "spellbot" / "assets"
 STRINGS_DATA_FILE = ASSETS_DIR / "strings.yaml"
 
 try:
-    from yaml import CLoader as Loader, CDumper as Dumper
+    from yaml import CDumper as Dumper
+    from yaml import CLoader as Loader
 except ImportError:
-    from yaml import Loader, Dumper
+    from yaml import Dumper, Loader
 
 
 def diff(expected, actual):

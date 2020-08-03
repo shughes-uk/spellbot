@@ -1,18 +1,18 @@
 > You can automatically invite players to the game by @ mentioning them in the command. They will be sent invite confirmations and the game won't be posted to the channel until they've responded.
-> 
+>
 > Players will be able to join or leave the game by reacting to the message that SpellBot sends with the ➕ and ➖ emoji.
-> 
+>
 > Up to five tags can be given as well to help describe the game expereince that you want. For example you might send `!lfg no-combo proxy` which will assign the tags: `no-combo` and `proxy` to your game. People will be able to see what tags are set on your game when they are looking for games to join.
 
 `!spellbot <subcommand> [subcommand parameters]`
 >  Configure SpellBot for your server. _Requires the "SpellBot Admin" role._
-> 
+>
 > The following subcommands are supported:
 > * `config`: Just show the current configuration for this server.
 > * `channel <list>`: Set SpellBot to only respond in the given list of channels.
 > * `prefix <string>`: Set SpellBot prefix for commands in text channels.
 > * `expire <number>`: Set the number of minutes before pending games expire.
---- 
+---
 Please report any bugs and suggestions at <https://github.com/lexicalunit/spellbot/issues>!
 
 💜 You can help keep SpellBot running by supporting me on Ko-fi! <https://ko-fi.com/Y8Y51VTHZ>

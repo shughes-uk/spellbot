@@ -2,33 +2,37 @@ import asyncio
 import inspect
 import logging
 import re
-import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
+from os.path import dirname, realpath
 from pathlib import Path
-from uuid import uuid4
 
+import alembic
+import alembic.config
 import click
+import coloredlogs
 import discord
 import hupper
-import requests
 from sqlalchemy import exc
 from sqlalchemy.sql import text
 
 from spellbot._version import __version__
 from spellbot.assets import ASSET_FILES, s
-from spellbot.constants import ADMIN_ROLE, CREATE_ENDPOINT, THUMB_URL
+from spellbot.constants import ADMIN_ROLE, THUMB_URL
 from spellbot.data import Channel, Data, Game, Server, User
 
 # Application Paths
 RUNTIME_ROOT = Path(".")
 SCRIPTS_DIR = RUNTIME_ROOT / "scripts"
-DB_DIR = RUNTIME_ROOT / "db"
-DEFAULT_DB_URL = f"sqlite:///{DB_DIR}/spellbot.db"
-TMP_DIR = RUNTIME_ROOT / "tmp"
+DEFAULT_DB_URL = f"postgresql://postgres:pass@localhost/spellbot"
 MIGRATIONS_DIR = SCRIPTS_DIR / "migrations"
+
+SRC_ROOT = Path(dirname(realpath(__file__))).parent.parent
+ASSETS_DIR = SRC_ROOT / "src" / "spellbot" / "assets"
+ALEMBIC_INI = ASSETS_DIR / "alembic.ini"
+VERSIONS_DIR = SRC_ROOT / "src" / "spellbot" / "versions"
 
 
 def to_int(s):
@@ -68,12 +72,6 @@ def is_admin(channel, user_or_member):
         else channel.guild.get_member(user_or_member.id)  # but users don't
     )
     return any(role.name == ADMIN_ROLE for role in member.roles) if member else False
-
-
-def ensure_application_directories_exist():
-    """Idempotent function to make sure needed application directories are there."""
-    TMP_DIR.mkdir(exist_ok=True)
-    DB_DIR.mkdir(exist_ok=True)
 
 
 def paginate(text):
@@ -122,16 +120,13 @@ class SpellBot(discord.Client):
     """Discord SpellTable Bot"""
 
     def __init__(
-        self, token="", db_url=DEFAULT_DB_URL, log_level=logging.ERROR, mock_games=False,
+        self, token="", db_url=DEFAULT_DB_URL, log_level=logging.ERROR,
     ):
         logging.basicConfig(level=log_level)
         loop = asyncio.get_event_loop()
         super().__init__(loop=loop)
         self.token = token
 
-        # We have to make sure that DB_DIR exists before we try to create
-        # the database as part of instantiating the Data object.
-        ensure_application_directories_exist()
         self.data = Data(db_url)
 
         # build a list of commands supported by this bot by fetching @command methods
@@ -591,24 +586,19 @@ class SpellBot(discord.Client):
         """
         Get information about SpellBot.
         """
-        embed = discord.Embed(title="SpellBot")
+        embed = discord.Embed(title="Levi")
         embed.set_thumbnail(url=THUMB_URL)
-        version = f"[{__version__}](https://pypi.org/project/spellbot/{__version__}/)"
+        version = f"{__version__}"
         embed.add_field(name="Version", value=version)
-        embed.add_field(
-            name="Package", value="[PyPI](https://pypi.org/project/spellbot/)"
-        )
-        author = "[@lexicalunit](https://github.com/lexicalunit)"
+        author = "[@lexicalunit](https://github.com/lexicalunit) !l[@shughes-uk](https://github.com/shughes-uk)"
         embed.add_field(name="Author", value=author)
         embed.description = (
-            "_A Discord bot for [SpellTable](https://www.spelltable.com/)._\n"
+            "_A Discord bot for Destiny lfg._\n"
             "\n"
             f"Use the command `{prefix}help` for usage details. "
-            "Having issues with SpellBot? "
-            "Please [report bugs](https://github.com/lexicalunit/spellbot/issues)!\n"
+            "Having issues with Levi? "
+            "Please [report bugs](https://github.com/shughes-uk/spellbot/issues)!\n"
             "\n"
-            "💜 Help keep SpellBot running by "
-            "[supporting me on Ko-fi!](https://ko-fi.com/Y8Y51VTHZ)"
         )
         embed.url = "https://github.com/lexicalunit/spellbot"
         embed.set_footer(text="MIT © amy@lexicalunit et al")
@@ -645,8 +635,8 @@ class SpellBot(discord.Client):
 
         params = [param.lower() for param in params]
         mentions = message.mentions if message.channel.type != "private" else []
-        title = params[0]
-        size = int(params[1])
+        size = int(params[0])
+        title = " ".join(params[1:])
         if not size or not (1 < size):
             return await message.channel.send(s("lfg_size_bad"))
 
@@ -708,14 +698,14 @@ class SpellBot(discord.Client):
         await message.channel.send(s("leave"))
 
     @command(allow_dm=False)
-    async def spellbot(self, session, prefix, params, message):
-        """
-        Configure SpellBot for your server. _Requires the "SpellBot Admin" role._
+    async def levi(self, session, prefix, params, message):
+        f"""
+        Configure Levi for your server. _Requires the "{ADMIN_ROLE}" role._
 
         The following subcommands are supported:
         * `config`: Just show the current configuration for this server.
-        * `channel <list>`: Set SpellBot to only respond in the given list of channels.
-        * `prefix <string>`: Set SpellBot prefix for commands in text channels.
+        * `channel <list>`: Set Levi to only respond in the given list of channels.
+        * `prefix <string>`: Set Levi prefix for commands in text channels.
         * `expire <number>`: Set the number of minutes before pending games expire.
         & <subcommand> [subcommand parameters]
         """
@@ -782,7 +772,7 @@ class SpellBot(discord.Client):
             .filter(Server.guild_xid == message.channel.guild.id)
             .one_or_none()
         )
-        embed = discord.Embed(title="SpellBot Server Config")
+        embed = discord.Embed(title="Levi Server Config")
         embed.set_thumbnail(url=THUMB_URL)
         embed.add_field(name="Command prefix", value=server.prefix)
         expires_str = f"{server.expire} minutes"
@@ -816,66 +806,145 @@ def get_log_level(fallback):  # pragma: no cover
     return value or fallback
 
 
-@click.command()
+@click.group()
+@click.version_option(version=__version__)
 @click.option(
     "-l",
     "--log-level",
     type=click.Choice(["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]),
     default="ERROR",
+    envvar="SPELLTABLE_LOG_LEVEL",
     help="Can also be set by the environment variable SPELLTABLE_LOG_LEVEL.",
 )
 @click.option("-v", "--verbose", count=True, help="Sets log level to DEBUG.")
+def main(log_level, verbose):
+    coloredlogs.install(
+        level="DEBUG" if verbose else log_level,
+        fmt="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s)",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        field_styles={
+            "asctime": {"color": "cyan"},
+            "hostname": {"color": "magenta"},
+            "levelname": {"bold": True, "color": "black"},
+            "name": {"color": "blue"},
+            "programname": {"color": "cyan"},
+            "username": {"color": "yellow"},
+        },
+        level_styles={
+            "debug": {"color": "magenta"},
+            "info": {"color": "green"},
+            "warning": {"color": "yellow"},
+            "error": {"color": "red"},
+            "critical": {"color": "red"},
+        },
+    )
+
+
+@main.command()
 @click.option(
     "-d",
     "--database-url",
     default=DEFAULT_DB_URL,
+    envvar="SPELLBOT_DB_URL",
     help=(
         "Database url connection string; "
         "you can also set this via the SPELLBOT_DB_URL environment variable."
     ),
 )
 @click.option(
-    "--database-env",
-    default="SPELLBOT_DB_URL",
-    help=(
-        "By default SpellBot look in the environment variable SPELLBOT_DB_URL for the "
-        "database connection string. If you need it to look in a different variable "
-        "you can set it with this option. For example Heroku uses DATABASE_URL."
-        "Can also be set by the environment variable SPELLTABLE_DB_ENV."
-    ),
+    "-t", "--token", required=True, envvar="SPELLBOT_TOKEN",
 )
-@click.version_option(version=__version__)
 @click.option(
     "--dev",
     default=False,
     is_flag=True,
     help="Development mode, automatically reload bot when source changes",
 )
-def main(log_level, verbose, database_url, database_env, dev):  # pragma: no cover
-    database_env = get_db_env(database_env)
-    database_url = get_db_url(database_env, database_url)
-    log_level = get_log_level(log_level)
+def run(token, database_url, dev):  # pragma: no cover
 
-    # We have to make sure that application directories exist
-    # before we try to create we can run any of the migrations.
-    ensure_application_directories_exist()
-
-    token = getenv("SPELLBOT_TOKEN", None)
-    if not token:
-        print(  # noqa: T001
-            "error: SPELLBOT_TOKEN environment variable not set", file=sys.stderr
-        )
-        sys.exit(1)
-
-    client = SpellBot(
-        token=token, db_url=database_url, log_level="DEBUG" if verbose else log_level,
-    )
+    client = SpellBot(token=token, db_url=database_url)
 
     if dev:
         reloader = hupper.start_reloader("spellbot.main")
         reloader.watch_files(ASSET_FILES)
 
     client.run()
+
+
+@main.group()
+def db():
+    pass
+
+
+@db.command()
+@click.option(
+    "-d",
+    "--database-url",
+    default=DEFAULT_DB_URL,
+    envvar="SPELLBOT_DB_URL",
+    help=(
+        "Database url connection string; "
+        "you can also set this via the SPELLBOT_DB_URL environment variable."
+    ),
+)
+@click.option(
+    "-m",
+    "--message",
+    default="nameless migration",
+    help=("Message to create the new revision with"),
+)
+def migrate(database_url, message):
+    SRC_ROOT = Path(dirname(realpath(__file__))).parent.parent
+    ASSETS_DIR = SRC_ROOT / "src" / "spellbot" / "assets"
+    ALEMBIC_INI = ASSETS_DIR / "alembic.ini"
+    VERSIONS_DIR = SRC_ROOT / "src" / "spellbot" / "versions"
+
+    config = alembic.config.Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(VERSIONS_DIR))
+    config.set_main_option("sqlalchemy.url", database_url)
+    alembic.command.revision(config, message=message, autogenerate=True)
+
+
+@db.command()
+@click.option(
+    "-d",
+    "--database-url",
+    default=DEFAULT_DB_URL,
+    envvar="SPELLBOT_DB_URL",
+    help=(
+        "Database url connection string; "
+        "you can also set this via the SPELLBOT_DB_URL environment variable."
+    ),
+)
+def upgrade(database_url):
+
+    config = alembic.config.Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(VERSIONS_DIR))
+    config.set_main_option("sqlalchemy.url", database_url)
+    alembic.command.upgrade(config, "head")
+
+
+@db.command()
+@click.option(
+    "-d",
+    "--database-url",
+    default=DEFAULT_DB_URL,
+    envvar="SPELLBOT_DB_URL",
+    help=(
+        "Database url connection string; "
+        "you can also set this via the SPELLBOT_DB_URL environment variable."
+    ),
+)
+def downgrade(database_url):
+    SRC_ROOT = Path(dirname(realpath(__file__))).parent.parent
+    ASSETS_DIR = SRC_ROOT / "src" / "spellbot" / "assets"
+    ALEMBIC_INI = ASSETS_DIR / "alembic.ini"
+    VERSIONS_DIR = SRC_ROOT / "src" / "spellbot" / "versions"
+
+    config = alembic.config.Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(VERSIONS_DIR))
+    config.set_main_option("sqlalchemy.url", database_url)
+    alembic.command.downgrade(config, "-1")
 
 
 if __name__ == "__main__":

@@ -1918,8 +1918,9 @@ def test_paginate():
 
 class TestMigrations:
     def test_alembic(self, tmp_path):
-        from spellbot.data import create_all, reverse_all
         from sqlalchemy import create_engine
+
+        from spellbot.data import create_all, reverse_all
 
         db_file = tmp_path / "spellbot.db"
         connection_url = f"sqlite:///{db_file}"
