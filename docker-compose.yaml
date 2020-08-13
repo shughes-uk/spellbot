@@ -1,0 +1,27 @@
+version: "3.4"
+services:
+  spellbot:
+    image: shughesuk/spellbot
+    build:
+      dockerfile: dev.dockerfile # Relative to context
+      context: .
+    volumes:
+      - .:/spellbot
+    environment:
+      SPELLBOT_TOKEN: TOKEN
+      SPELLBOT_DB_URL: postgresql://postgres:pass@postgres/spellbot
+    depends_on:
+      - postgres
+    restart: always
+  postgres:
+    restart: always
+    image: postgres
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - "dbdata:/var/lib/postgresql/data"
+      - "./postgresql-create-databases.sh:/docker-entrypoint-initdb.d/postgresql-create-databases.sh"
+volumes:
+  dbdata:

@@ -125,14 +125,16 @@ class Game(Base):
 
     def to_embed(self):
         if self.status == "started":
-            f"{self.title} Your game is ready!"
+            title = f"{self.title} your game is ready!"
+            description = "Have fun!"
         else:
             remaining = self.size - len(self.users)
             plural = "s" if remaining > 1 else ""
             title = f"__{self.title}__\nWaiting for {remaining} more player{plural} to join..."
+            description = "To join/leave this game, react with ➕/➖."
         embed = discord.Embed(title=title)
         embed.set_thumbnail(url=THUMB_URL)
-        embed.description = "To join/leave this game, react with ➕/➖."
+        embed.description = description
         if self.users:
             players = ", ".join(sorted([f"<@{user.xid}>" for user in self.users]))
             embed.add_field(name="Players", value=players)

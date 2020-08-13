@@ -34,6 +34,8 @@ ASSETS_DIR = SRC_ROOT / "src" / "spellbot" / "assets"
 ALEMBIC_INI = ASSETS_DIR / "alembic.ini"
 VERSIONS_DIR = SRC_ROOT / "src" / "spellbot" / "versions"
 
+logger = logging.getLogger(__name__)
+
 
 def to_int(s):
     try:
@@ -107,7 +109,11 @@ def command(allow_dm=True):
     def callable(func):
         @wraps(func)
         async def wrapped(*args, **kwargs):
-            return await func(*args, **kwargs)
+            try:
+                return await func(*args, **kwargs)
+            except:
+                logger.exception(f"Error running func {func}")
+                raise
 
         wrapped.is_command = True
         wrapped.allow_dm = allow_dm
@@ -318,7 +324,6 @@ class SpellBot(discord.Client):
             return
         matching = [command for command in self.commands if command.startswith(request)]
         if not matching:
-            await message.channel.send(s("not_a_command", request=request))
             return
         if len(matching) > 1 and request not in matching:
             possible = ", ".join(f"{prefix}{m}" for m in matching)
@@ -376,94 +381,125 @@ class SpellBot(discord.Client):
                 await post.add_reaction("➕")
                 await post.add_reaction("➖")
 
+    async def try_to_update_game(self, game) -> None:
+        """Attempts to update the embed for a game."""
+        if not game.channel_xid or not game.message_xid:
+            return
+
+        chan = await self.safe_fetch_channel(game.channel_xid)
+        if not chan:
+            return
+
+        post = await self.safe_fetch_message(chan, game.message_xid)
+        if not post:
+            return
+
+        await post.edit(embed=game.to_embed())
+
     ##############################
     # Discord Client Behavior
     ##############################
 
     async def on_raw_reaction_add(self, payload):
         """Behavior when the client gets a new reaction on a Discord message."""
-        emoji = str(payload.emoji)
-        if emoji not in ["➕", "➖"]:
-            return
-
-        channel = await self.safe_fetch_channel(payload.channel_id)
-        if not channel or str(channel.type) != "text":
-            return
-
-        author = payload.member
-        if author.bot or author.id == self.user.id:
-            return
-
-        message = await self.safe_fetch_message(channel, payload.message_id)
-        if not message:
-            return
-
-        async with self.session() as session:
-            server = self.ensure_server_exists(session, payload.guild_id)
-            session.commit()
-
-            if not server.bot_allowed_in(channel.name):
+        try:
+            emoji = str(payload.emoji)
+            if emoji not in ["➕", "➖"]:
                 return
 
-            game = (
-                session.query(Game).filter(Game.message_xid == message.id).one_or_none()
-            )
-            if not game or game.status != "pending":
-                return  # this isn't a post relating to a game, just ignore it
+            channel = await self.safe_fetch_channel(payload.channel_id)
+            if not channel or str(channel.type) != "text":
+                return
 
-            user = self.ensure_user_exists(session, author)
-            session.commit()
+            author = payload.member
+            if author.bot or author.id == self.user.id:
+                return
 
-            now = datetime.utcnow()
-            expires_at = now + timedelta(minutes=server.expire)
+            message = await self.safe_fetch_message(channel, payload.message_id)
+            if not message:
+                return
 
-            await self.safe_remove_reaction(message, emoji, author)
+            async with self.session() as session:
+                server = self.ensure_server_exists(session, payload.guild_id)
+                session.commit()
 
-            if emoji == "➕":
-                if any(user.xid == game_user.xid for game_user in game.users):
-                    # this author is already in this game, they don't need to be added
-                    return
-                if user.game and user.game.id != game.id:
-                    # this author is already another game, they can't be added
-                    return await author.send(s("react_already_in", prefix=server.prefix))
-                user.game = game
-            else:  # emoji == "➖":
-                if not any(user.xid == game_user.xid for game_user in game.users):
-                    # this author is not in this game, so they can't be removed from it
+                if not server.bot_allowed_in(channel.name):
                     return
 
-                # update the game and remove the user from the game
+                game = (
+                    session.query(Game)
+                    .filter(Game.message_xid == message.id)
+                    .one_or_none()
+                )
+                if not game or game.status != "pending":
+                    return  # this isn't a post relating to a game, just ignore it
+
+                user = self.ensure_user_exists(session, author)
+                session.commit()
+
+                now = datetime.utcnow()
+                expires_at = now + timedelta(minutes=server.expire)
+
+                await self.safe_remove_reaction(message, emoji, author)
+
+                if emoji == "➕":
+                    if any(user.xid == game_user.xid for game_user in game.users):
+                        # this author is already in this game, they don't need to be added
+                        return
+                    if (
+                        user.game
+                        and user.game.id != game.id
+                        and user.game.status != "started"
+                    ):
+                        # this author is already another game, they can't be added
+                        return await author.send(
+                            s("react_already_in", prefix=server.prefix)
+                        )
+
+                    user.game = game
+                    session.commit()
+                    await self.try_to_update_game(game)
+                else:  # emoji == "➖":
+                    if not any(user.xid == game_user.xid for game_user in game.users):
+                        # this author is not in this game, so they can't be removed from it
+                        return
+
+                    # update the game and remove the user from the game
+                    game.updated_at = now
+                    game.expires_at = expires_at
+                    user.game = None
+                    session.commit()
+
+                    # update the game message
+                    return await self.safe_edit_message(message, embed=game.to_embed())
+
                 game.updated_at = now
                 game.expires_at = expires_at
-                user.game = None
                 session.commit()
 
-                # update the game message
-                return await self.safe_edit_message(message, embed=game.to_embed())
+                found_discord_users = []
+                if len(game.users) == game.size:
+                    for game_user in game.users:
+                        discord_user = await self.safe_fetch_user(game_user.xid)
+                        if not discord_user:  # user has left the server since signing up
+                            game_user.game = None
+                        else:
+                            found_discord_users.append(discord_user)
 
-            game.updated_at = now
-            game.expires_at = expires_at
-            session.commit()
-
-            found_discord_users = []
-            if len(game.users) == game.size:
-                for game_user in game.users:
-                    discord_user = await self.safe_fetch_user(game_user.xid)
-                    if not discord_user:  # user has left the server since signing up
-                        game_user.game = None
-                    else:
-                        found_discord_users.append(discord_user)
-
-            if len(found_discord_users) == game.size:  # game is ready
-                game.status = "started"
-                session.commit()
-                for discord_user in found_discord_users:
-                    await discord_user.send(embed=game.to_embed())
-                await self.safe_edit_message(message, embed=game.to_embed())
-                await self.safe_clear_reactions(message)
-            else:
-                session.commit()
-                await self.safe_edit_message(message, embed=game.to_embed())
+                if len(found_discord_users) == game.size:  # game is ready
+                    game.status = "started"
+                    session.commit()
+                    for discord_user in found_discord_users:
+                        await discord_user.send(embed=game.to_embed())
+                    await self.safe_edit_message(message, embed=game.to_embed())
+                    await self.safe_clear_reactions(message)
+                    game.users.clear()
+                else:
+                    session.commit()
+                    await self.safe_edit_message(message, embed=game.to_embed())
+        except:
+            logger.exception("Error on raw reaction add")
+            raise
 
     async def on_message(self, message):
         """Behavior when the client gets a message from Discord."""
@@ -699,8 +735,8 @@ class SpellBot(discord.Client):
 
     @command(allow_dm=False)
     async def levi(self, session, prefix, params, message):
-        f"""
-        Configure Levi for your server. _Requires the "{ADMIN_ROLE}" role._
+        """
+        Configure Levi for your server. _Requires the "Levi Admin" role._
 
         The following subcommands are supported:
         * `config`: Just show the current configuration for this server.
@@ -755,7 +791,7 @@ class SpellBot(discord.Client):
         if not params:
             return await message.channel.send(s("spellbot_expire_none"))
         expire = to_int(params[0])
-        if not expire or not (0 < expire <= 60):
+        if not expire or not (0 < expire <= 1440):
             return await message.channel.send(s("spellbot_expire_bad"))
         server = (
             session.query(Server)

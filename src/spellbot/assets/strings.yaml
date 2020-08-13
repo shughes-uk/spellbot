@@ -1,38 +1,49 @@
 begin_bad_event: Sorry, SpellBot can not find an event with that id.
-begin_event_already_started: Sorry, that event has already started and can not be
+begin_event_already_started:
+  Sorry, that event has already started and can not be
   started again.
 begin_no_params: Please provide the event id.
-begin_user_left: '**Warning:** A user left the server since this event was created.
-  SpellBot did **NOT** start the game for the players: $players.'
-did_you_mean: 'Did you mean: $possible?'
+begin_user_left:
+  "**Warning:** A user left the server since this event was created.
+  SpellBot did **NOT** start the game for the players: $players."
+did_you_mean: "Did you mean: $possible?"
 dm_sent: Right on, I'll send you a Direct Message with details.
 event_bad_play_count: Player count must be between 2 and 4.
-event_created: Event $event_id created! If everything looks good, next run `${prefix}begin
+event_created:
+  Event $event_id created! If everything looks good, next run `${prefix}begin
   $event_id` to start the event.
-event_empty: No games created for this event, please address any warnings and try
+event_empty:
+  No games created for this event, please address any warnings and try
   again.
-event_missing_player: '**Warning:** Event file is missing a player name on row $row.
-  SpellBot will **NOT** create a game for the players: $players.'
-event_missing_user: '**Warning:** On row $row the username "$name" is not on this
+event_missing_player:
+  "**Warning:** Event file is missing a player name on row $row.
+  SpellBot will **NOT** create a game for the players: $players."
+event_missing_user:
+  '**Warning:** On row $row the username "$name" is not on this
   server. SpellBot will **NOT** create a game for the players: $players.'
-event_no_data: Sorry, you must include an attachment containing event data with this
+event_no_data:
+  Sorry, you must include an attachment containing event data with this
   command.
 event_no_header: Sorry, the attached CSV file is missing a header.
-event_no_params: Please include the column names from the CSV file too identify the
+event_no_params:
+  Please include the column names from the CSV file too identify the
   players' discord names.
-event_not_csv: Sorry, the file is not a CSV file. Make sure the filename ends with
+event_not_csv:
+  Sorry, the file is not a CSV file. Make sure the filename ends with
   ".csv" please.
 expired: SpellBot has deleted your pending game due to server inactivity.
-game_created: '**Game $id created:**
+game_created: "**Game $id created:**
 
   > $url
 
-  > Players notified by DM: $players'
+  > Players notified by DM: $players"
 game_message_too_long: Sorry, the optional game message must be shorter than 255 characters.
 game_size_bad: Game size must be between 2 and 4.
-game_too_few_mentions: Sorry, you mentioned too few people. I expected $size players
+game_too_few_mentions:
+  Sorry, you mentioned too few people. I expected $size players
   to be mentioned.
-game_too_many_mentions: Sorry, you mentioned too many people. I expected $size players
+game_too_many_mentions:
+  Sorry, you mentioned too many people. I expected $size players
   to be mentioned.
 game_too_many_tags: Sorry, you can not use more than 5 tags.
 invite_already_confirmed: Your invitation has already been confirmed.
@@ -41,11 +52,14 @@ invite_denied: Thank you for your response.
 invite_not_invited: Sorry, you do not currently have any pending invitations.
 leave: You've been removed from the pending game that you were signed up for.
 leave_already: You we're not in any pending games.
-lfg_already: You're already in a pending game. If you want to, you can leave all games
+lfg_already:
+  You're already in a pending game. If you want to, you can leave all games
   with `${prefix}leave`.
-lfg_invited: You've been invtied to a game by $mention. To confirm or deny please
+lfg_invited:
+  You've been invtied to a game by $mention. To confirm or deny please
   respond with yes or no.
-lfg_mention_already: Sorry, but $mention is already in another pending game and can't
+lfg_mention_already:
+  Sorry, but $mention is already in another pending game and can't
   be invited.
 lfg_size_bad: Sorry, game size should be between 2 and 4.
 lfg_too_many_mentions: Sorry, you've mentioned too many players for this size game.
@@ -53,12 +67,13 @@ lfg_too_many_tags: Sorry, you can not use more than 5 tags.
 no_dm: That command only works in text channels.
 not_a_command: Sorry, there is no "$request" command.
 not_admin: You do not have admin permissions for this bot.
-react_already_in: Sorry, I couldn't add you to that game because you're already signed
+react_already_in:
+  Sorry, I couldn't add you to that game because you're already signed
   up for another game. You can use `${prefix}leave` to leave that game.
-spellbot_channels: 'This bot is now authorized to respond only in: $channels'
+spellbot_channels: "This bot is now authorized to respond only in: $channels"
 spellbot_channels_none: Please provide a list of channels.
 spellbot_expire: Game expiration time set to $expire minutes.
-spellbot_expire_bad: Sorry, game expiration time should be between 10 and 60 minutes.
+spellbot_expire_bad: Sorry, game expiration time should be between 10 and 1440 minutes.
 spellbot_expire_none: Please provide a number of minutes.
 spellbot_missing_subcommand: Please provide a subcommand when using this command.
 spellbot_prefix: This bot will now use "$prefix" as its command prefix for this server.
